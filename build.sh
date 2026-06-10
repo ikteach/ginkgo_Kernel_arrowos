@@ -6,7 +6,7 @@ COMMAND="${1:-build}"
 
 if [[ "$COMMAND" == "clean" ]]; then
     echo "Cleaning output directory..."
-    rm -rf "$HOME/ginkgo/kernel-out"
+    rm -rf "$HOME/arrowos-v2/kernel-out"
     rm -rf out
     echo "Clean complete."
     exit 0
@@ -31,7 +31,7 @@ fi
 
 if [[ "$COMMAND" == "menu" ]]; then
     echo "Opening menuconfig..."
-    OUT="$HOME/ginkgo/kernel-out"
+    OUT="$HOME/arrowos-v2/kernel-out"
     mkdir -p "$OUT"
     make O="$OUT" ARCH=arm64 LLVM=1 nethunter_defconfig
     make O="$OUT" ARCH=arm64 LLVM=1 nconfig
@@ -41,7 +41,7 @@ fi
 
 AK3_URL="https://github.com/loukious/AnyKernel3.git"
 AK3_BRANCH="master"
-AK3_DIR="$HOME/ginkgo/anykernel"
+AK3_DIR="$HOME/arrowos-v2/anykernel"
 
 patch_anykernel_script() {
     local anykernel_script="$AK3_DIR/anykernel.sh"
@@ -50,7 +50,7 @@ patch_anykernel_script() {
         return 0
     fi
 
-    sed -i -E 's/\bvayu\b/ginkgo/g; s/\bbhima\b//g' "$anykernel_script"
+    sed -i -E 's/\bvayu\b/arrowos-v2/g; s/\bbhima\b//g' "$anykernel_script"
     echo "Patched $anykernel_script (string replacements only)."
 }
 
@@ -101,7 +101,7 @@ export USE_CCACHE=0
 export CCACHE_EXEC=/usr/local/bin/ccache
 
 KERNEL_VER="$(date '+%Y%m%d-%H%M')"
-OUT="$HOME/ginkgo/kernel-out"
+OUT="$HOME/arrowos-v2/kernel-out"
 
 MAKE_PARAMS=(
     O="$OUT"
