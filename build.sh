@@ -124,6 +124,7 @@ MAKE_PARAMS=(
     CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
     KBUILD_BUILD_USER="Ikteach"
     KBUILD_BUILD_HOST="linux"
+    KBUILD_BUILD_VERSION="4.0"
 )
 
 function clean_all {
