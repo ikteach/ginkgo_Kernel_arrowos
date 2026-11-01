@@ -61,6 +61,9 @@ void hdd_rx_monitor_callback(ol_osif_vdev_handle context,
 	while (skb) {
 		skb_next = skb->next;
 		skb->dev = adapter->dev;
+		skb->pkt_type = PACKET_OTHERHOST;
+		skb->protocol = htons(ETH_P_802_2);
+		skb_reset_mac_header(skb);
 
 		++adapter->hdd_stats.tx_rx_stats.rx_packets[cpu_index];
 		++adapter->stats.rx_packets;
@@ -130,4 +133,42 @@ int hdd_enable_monitor_mode(struct net_device *dev)
 		return -EINVAL;
 
 	return cdp_set_monitor_mode(soc, vdev_id, false);
+}
+
+/**
+ * hdd_disable_monitor_mode() - Disable monitor mode
+ * @dev: Pointer to the net_device structure
+ *
+ * This function disables monitor mode configuration on the hardware
+ * and also disables frame injection if it was enabled.
+ *
+ * Return: 0 for success; non-zero for failure
+ */
+int hdd_disable_monitor_mode(struct net_device *dev)
+{
+        void *soc = cds_get_context(QDF_MODULE_ID_SOC);
+        uint8_t vdev_id;
+        int ret;
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+        struct hdd_adapter *adapter = WLAN_HDD_GET_PRIV_PTR(dev);
+#endif
+
+        hdd_enter_dev(dev);
+
+        vdev_id = cdp_get_mon_vdev_from_pdev(soc, OL_TXRX_PDEV_ID);
+        if (vdev_id < 0)
+                return -EINVAL;
+
+#ifdef FEATURE_FRAME_INJECTION_SUPPORT
+        /* Disable frame injection when monitor mode is disabled */
+        if (adapter) {
+                if (QDF_IS_STATUS_ERROR(hdd_frame_inject_disable(adapter))) {
+                        hdd_warn("Failed to disable frame injection");
+                }
+        }
+#endif
+
+        ret = cdp_set_monitor_mode(soc, vdev_id, true);
+
+        return ret;
 }
