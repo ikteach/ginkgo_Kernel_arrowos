@@ -47,6 +47,10 @@ static inline int hdd_disable_monitor_mode(struct net_device *dev)
 {
         return 0;
 }
+static inline int hdd_disable_monitor_mode(struct net_device *dev)
+{
+	return 0;
+}
 #endif /* CONFIG_LITHIUM */
 
 #endif /* __WLAN_HDD_RX_MONITOR_H */
