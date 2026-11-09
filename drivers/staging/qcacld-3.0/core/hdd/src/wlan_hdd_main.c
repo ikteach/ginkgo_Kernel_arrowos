@@ -2653,17 +2653,7 @@ static int __hdd_mon_open(struct net_device *dev)
 			hdd_err("hdd_start_adapters() successful !");
 		}
 		hdd_mon_turn_off_ps_and_wow(hdd_ctx);
-                set_bit(DEVICE_IFACE_OPENED, &adapter->event_flags);
-        } else {
-                if (!test_bit(SME_SESSION_OPENED, &adapter->event_flags)) {
-                        ret = hdd_start_adapter(adapter);
-                        if (ret) {
-                                hdd_err("Failed to start adapter :%d",
-                                        adapter->device_mode);
-                                return ret;
-                        }
-                        hdd_err("hdd_start_adapters() successful !");
-                }
+		set_bit(DEVICE_IFACE_OPENED, &adapter->event_flags);
 	}
 
 	ret = hdd_set_mon_rx_cb(dev);
@@ -4176,22 +4166,8 @@ static int __hdd_stop(struct net_device *dev)
 	 * layer. Skip BSS termination and adapter deletion for NAN Data
 	 * interface (NDI).
 	 */
-        /*
-         * NAN data interface and Monitor mode interface should not destroy
-         * adapter and vdev on administrative ifdown (e.g. airmon-ng stop wlan0).
-         * Monitor mode lifecycle and teardown is managed globally via con_mode.
-         */
-        if (WLAN_HDD_IS_NDI(adapter) ||
-            wlan_hdd_is_session_type_monitor(adapter->device_mode) ||
-            adapter->device_mode == QDF_MONITOR_MODE ||
-            hdd_get_conparam() == QDF_GLOBAL_MONITOR_MODE ||
-            dev->type == ARPHRD_IEEE80211_RADIOTAP) {
-#ifdef FEATURE_MONITOR_MODE_SUPPORT
-                if (adapter->device_mode == QDF_MONITOR_MODE)
-                        hdd_disable_monitor_mode(dev);
-#endif
+	if (WLAN_HDD_IS_NDI(adapter))
 		return 0;
-	}
 
 	/*
 	 * The interface is marked as down for outside world (aka kernel)
@@ -4913,11 +4889,6 @@ void hdd_set_station_ops(struct net_device *dev)
 		dev->netdev_ops = &wlan_drv_ops;
 }
 
-void hdd_set_monitor_ops(struct net_device *dev)
-{
-	dev->netdev_ops = &wlan_mon_drv_ops;
-}
-
 #endif
 #else
 #ifdef WLAN_FEATURE_TSF_PTP
@@ -4942,12 +4913,12 @@ static const struct net_device_ops wlan_pktcapture_drv_ops = {
 	.ndo_get_stats = hdd_get_stats,
 };
 
-static inline void hdd_set_pktcapture_ops(struct net_device *dev)
+static void hdd_set_pktcapture_ops(struct net_device *dev)
 {
 	dev->netdev_ops = &wlan_pktcapture_drv_ops;
 }
 #else
-static inline void hdd_set_pktcapture_ops(struct net_device *dev)
+static void hdd_set_pktcapture_ops(struct net_device *dev)
 {
 }
 #endif
@@ -4981,7 +4952,6 @@ hdd_alloc_station_adapter(struct hdd_context *hdd_ctx, tSirMacAddr mac_addr,
 			      name_assign_type,
 #endif
 			      ((cds_get_conparam() == QDF_GLOBAL_MONITOR_MODE ||
-			       session_type == QDF_MONITOR_MODE ||
 			       wlan_hdd_is_session_type_monitor(session_type)) ?
 			       hdd_mon_mode_ether_setup : ether_setup),
 			      NUM_TX_QUEUES);
@@ -5029,16 +4999,10 @@ hdd_alloc_station_adapter(struct hdd_context *hdd_ctx, tSirMacAddr mac_addr,
 	qdf_mem_copy(adapter->mac_addr.bytes, mac_addr, sizeof(tSirMacAddr));
 	dev->watchdog_timeo = HDD_TX_TIMEOUT;
 
-	if (session_type == QDF_MONITOR_MODE ||
-	    wlan_hdd_is_session_type_monitor(session_type)) {
-#ifdef FEATURE_MONITOR_MODE_SUPPORT
-		dev->netdev_ops = &wlan_mon_drv_ops;
-#else
+	if (wlan_hdd_is_session_type_monitor(session_type))
 		hdd_set_pktcapture_ops(adapter->dev);
-#endif
-	} else {
+	else
 		hdd_set_station_ops(adapter->dev);
-	}
 
 	hdd_dev_setup_destructor(dev);
 	dev->ieee80211_ptr = &adapter->wdev;
@@ -17874,7 +17838,7 @@ void hdd_hidden_ssid_enable_roaming(hdd_handle_t hdd_handle, uint8_t vdev_id)
 	wlan_hdd_enable_roaming(adapter, RSO_START_BSS);
 }
 
-#if defined(WLAN_FEATURE_PKT_CAPTURE) || defined(FEATURE_MONITOR_MODE_SUPPORT)
+#ifdef WLAN_FEATURE_PKT_CAPTURE
 
 /**
  * wlan_hdd_is_session_type_monitor() - check if session type is MONITOR
@@ -17885,7 +17849,8 @@ void hdd_hidden_ssid_enable_roaming(hdd_handle_t hdd_handle, uint8_t vdev_id)
  */
 bool wlan_hdd_is_session_type_monitor(uint8_t session_type)
 {
-	if (cds_get_conparam() != QDF_GLOBAL_MONITOR_MODE &&
+	if (cds_is_pktcapture_enabled() &&
+	    cds_get_conparam() != QDF_GLOBAL_MONITOR_MODE &&
 	    session_type == QDF_MONITOR_MODE)
 		return true;
 	else
@@ -17903,19 +17868,16 @@ bool wlan_hdd_is_session_type_monitor(uint8_t session_type)
 bool wlan_hdd_check_mon_concurrency(void)
 {
 	struct hdd_context *hdd_ctx = cds_get_context(QDF_MODULE_ID_HDD);
-	uint8_t num_open_session = 0;
 
 	if (!hdd_ctx) {
 		hdd_err("HDD context is null");
 		return -EINVAL;
 	}
 
-	if (QDF_STATUS_SUCCESS == policy_mgr_mode_specific_num_open_sessions(
-						hdd_ctx->psoc,
-						QDF_MONITOR_MODE,
-						&num_open_session)) {
-		if (num_open_session >= 1) {
-			hdd_err("Monitor session already exists");
+	if (cds_is_pktcapture_enabled()) {
+		if (policy_mgr_get_concurrency_mode(hdd_ctx->psoc) ==
+		    (QDF_STA_MASK | QDF_MONITOR_MASK)) {
+			hdd_err("STA + MON mode is UP");
 			return true;
 		}
 	}
@@ -17935,21 +17897,9 @@ bool wlan_hdd_check_mon_concurrency(void)
 void wlan_hdd_del_monitor(struct hdd_context *hdd_ctx,
 			  struct hdd_adapter *adapter, bool rtnl_held)
 {
-#ifdef FEATURE_FRAME_INJECTION_SUPPORT
-        {
-                tp_wma_handle wma = cds_get_context(QDF_MODULE_ID_WMA);
-
-                if (wma)
-                        wma_injection_pre_stop_cleanup(wma);
-        }
-#endif
-#ifdef FEATURE_MONITOR_MODE_SUPPORT
-        hdd_disable_monitor_mode(adapter->dev);
-#endif
 	wlan_hdd_release_intf_addr(hdd_ctx, adapter->mac_addr.bytes);
 	hdd_stop_adapter(hdd_ctx, adapter);
-	hdd_deinit_adapter(hdd_ctx, adapter, rtnl_held);
-	hdd_close_adapter(hdd_ctx, adapter, rtnl_held);
+	hdd_close_adapter(hdd_ctx, adapter, true);
 
 	hdd_open_p2p_interface(hdd_ctx);
 }
@@ -17976,7 +17926,9 @@ wlan_hdd_add_monitor_check(struct hdd_context *hdd_ctx,
 	struct hdd_adapter *mon_adapter;
 	uint32_t mode;
 	uint8_t num_open_session = 0;
-	uint8_t *mon_mac_addr;
+
+	if (!cds_is_pktcapture_enabled())
+		return 0;
 
 	/*
 	 * If add interface request is for monitor mode, then it can run in
@@ -18029,44 +17981,39 @@ wlan_hdd_add_monitor_check(struct hdd_context *hdd_ctx,
 
 	/* delete p2p interface */
 	for (mode = QDF_P2P_CLIENT_MODE; mode <= QDF_P2P_DEVICE_MODE; mode++) {
-		struct hdd_adapter *p2p_adapter;
+		struct hdd_adapter *adapter;
 
 		if (mode == QDF_FTM_MODE ||
 		    mode == QDF_MONITOR_MODE ||
 		    mode == QDF_IBSS_MODE)
 			continue;
 
-		p2p_adapter = hdd_get_adapter(hdd_ctx, mode);
-		if (p2p_adapter) {
+		adapter = hdd_get_adapter(hdd_ctx, mode);
+		if (adapter) {
 			struct osif_vdev_sync *vdev_sync;
 
-			vdev_sync = osif_vdev_sync_unregister(p2p_adapter->dev);
+			vdev_sync = osif_vdev_sync_unregister(adapter->dev);
 			if (vdev_sync)
 				osif_vdev_sync_wait_for_ops(vdev_sync);
 
 			wlan_hdd_release_intf_addr(hdd_ctx,
-						   p2p_adapter->mac_addr.bytes);
-			hdd_stop_adapter(hdd_ctx, p2p_adapter);
-			hdd_deinit_adapter(hdd_ctx, p2p_adapter, true);
-			hdd_close_adapter(hdd_ctx, p2p_adapter, rtnl_held);
+						   adapter->mac_addr.bytes);
+			hdd_stop_adapter(hdd_ctx, adapter);
+			hdd_deinit_adapter(hdd_ctx, adapter, true);
+			hdd_close_adapter(hdd_ctx, adapter, rtnl_held);
 
 			if (vdev_sync)
 				osif_vdev_sync_destroy(vdev_sync);
 		}
 	}
 
-	mon_mac_addr = wlan_hdd_get_intf_addr(hdd_ctx, QDF_MONITOR_MODE);
-	if (!mon_mac_addr) {
-		hdd_err("Failed to get interface address for monitor mode");
-		return -EINVAL;
-	}
-
 	mon_adapter = hdd_open_adapter(hdd_ctx, QDF_MONITOR_MODE, name,
-				       mon_mac_addr,
+				       wlan_hdd_get_intf_addr(
+				       hdd_ctx,
+				       QDF_MONITOR_MODE),
 				       name_assign_type, rtnl_held);
 	if (!mon_adapter) {
 		hdd_err("hdd_open_adapter failed");
-		wlan_hdd_release_intf_addr(hdd_ctx, mon_mac_addr);
 		hdd_open_p2p_interface(hdd_ctx);
 		return -EINVAL;
 	}
@@ -18074,7 +18021,7 @@ wlan_hdd_add_monitor_check(struct hdd_context *hdd_ctx,
 	*adapter = mon_adapter;
 	return 0;
 }
-#endif /* WLAN_FEATURE_PKT_CAPTURE || FEATURE_MONITOR_MODE_SUPPORT */
+#endif /* WLAN_FEATURE_PKT_CAPTURE */
 
 #ifdef FEATURE_MONITOR_MODE_SUPPORT
 
